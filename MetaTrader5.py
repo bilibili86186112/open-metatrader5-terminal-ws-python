@@ -199,6 +199,7 @@ def _need() -> MT5Client:
 def initialize(path: Optional[str] = None, *, login: Optional[int] = None,
                password: Optional[str] = None, server: Optional[str] = None,
                timeout: float = 20000, portable: bool = False,
+               endpoints: Optional[list[str]] = None,
                **kwargs) -> bool:
     """连接并登录（对应官方的 ``initialize``）。
 
@@ -213,7 +214,8 @@ def initialize(path: Optional[str] = None, *, login: Optional[int] = None,
     if not lg or not pw:
         return _err(-1, "缺少 login/password（也可用 MT5_LOGIN/MT5_PASSWORD 环境变量）")
     try:
-        _client = MT5Client.connect_auto(login=int(lg), password=pw, server=sv)
+        _client = MT5Client.connect_auto(login=int(lg), password=pw, server=sv,
+                                         endpoints=endpoints)
         if _tick_cb is not None:
             _client.set_tick_callback(_tick_cb)
         _login_args.update(login=int(lg), server=sv)
@@ -266,7 +268,8 @@ def account_info():
     return AccountInfo(
         login=a.login, trade_mode=a.trade_mode, leverage=a.leverage,
         limit_orders=0, margin_so_mode=0,
-        trade_allowed=bool(a.trade_mode == 4), trade_expert=False,
+        trade_allowed=None,          # 服务器不下发该字段，无法可靠判断（官方为 bool）
+        trade_expert=False,
         margin_mode=0, currency_digits=2, margin_so_call=0.0, margin_so_so=0.0,
         margin_initial=0.0, margin_maintenance=0.0,
         balance=float(a.balance or 0.0), credit=0.0,

@@ -26,12 +26,15 @@ fast = ["pycryptodome>=3.19", "cryptography>=41", "websocket-client>=1.6"]
 numpy = ["numpy>=1.24"]
 dev = ["pytest>=8"]
 
+[project.scripts]
+mt5cli = "mt5cli:main"
+[project.urls]
 [project.urls]
 Documentation = "https://github.com/lj189cn/metatrader5-terminal-python"
 
 [tool.setuptools]
 packages = ["mt5ws"]
-py-modules = ["MetaTrader5"]
+py-modules = ["MetaTrader5", "mt5cli"]
 
 [tool.setuptools.package-data]
 mt5ws = ["frames/*.bin", "frames/*.hex"]

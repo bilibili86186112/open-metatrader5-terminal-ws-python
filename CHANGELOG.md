@@ -27,3 +27,14 @@
 
 `mt5ws/endpoints.py` 带一份实测可用的 **Web 终端网关**表（Exness）。
 ⚠️ 注意与**原生 TCP 网关**（`203.29.60.x`）区分 —— 两者不通用。
+
+### 1.0.0 附加：交易命令行 `mt5cli`
+
+* 只读：`account` / `symbols` / `quote` / `kline` / `positions` / `orders` / `history`
+* 交易：`buy` / `sell` / `close` / `modify` —— **必须 `-y` 或用交互确认**，否则只做 dry-run
+* 交互 REPL（不传子命令时）
+* 下单前自动跑 `order_check`；下单后**自动重连复核**持仓
+* 安装后可直接 `mt5cli`；`[project.scripts]` 已注册
+
+实测（Exness demo）：`buy XAUUSDm 0.01` → `retcode=0` 294ms → 自动确认为持仓 →
+`close` → `retcode=0` → 持仓归零。

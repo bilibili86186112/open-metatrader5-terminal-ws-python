@@ -115,3 +115,51 @@ WebSocket 帧编解码、品种规格解析、序列化往返。
 
 仅用于**你自己的、有授权的**账户（如经纪商提供的 demo 账户）。
 交易有风险，本项目不保证任何交易结果；实盘使用前请自行充分测试。
+
+---
+
+## 交易命令行 `mt5cli`
+
+装好后直接 `mt5cli`；或在本仓库根目录 `python3 mt5cli.py`。
+
+```bash
+export MT5_LOGIN=123456 MT5_PASSWORD='...' MT5_SERVER=Exness-MT5Trial5
+
+# 只读
+mt5cli account                 # 账户：余额/净值/保证金/杠杆
+mt5cli symbols GOLD            # 品种搜索
+mt5cli quote XAUUSDm           # 报价
+mt5cli kline XAUUSDm --tf M5 --count 20
+mt5cli positions [SYMBOL]      # 持仓（表格 + 浮动盈亏合计）
+mt5cli orders                  # 挂单
+mt5cli history --days 7 --symbol GBPUSDm
+
+# 交易（**必须** `-y` 或用交互模式按 y 确认）
+mt5cli buy  XAUUSDm 0.01 --sl 3950 --tp 4100 -y
+mt5cli sell EURUSDm 0.01 -y
+mt5cli close GBPUSDm -y         # 平某品种全部
+mt5cli close --all -y           # 平所有（危险）
+mt5cli modify 2740800934 GBPUSDm --sl 1.3300 --tp 1.3500 -y
+
+# 交互模式
+mt5cli                          # 进入 mt5> REPL，输入 help 看命令
+```
+
+### 安全设计
+
+* **默认不下单** —— 交易类命令不加 `-y`、且在非交互环境（stdin 为空）时会**自动取消**
+* 下单前先跑 `order_check`（可交易性 / 手数规整 / 保证金 / SL-TP 方向），
+  不通过直接拒绝并说明原因
+* 下单成功后**自动重连复核**并在持仓里确认（因为同会话快照会滞后）
+* 成功判定用 `retcode ∈ {0, 10009}`；其余码翻译成中文说明
+
+实测输出示例（真实账户）：
+
+```
+mt5> buy XAUUSDm 0.01 --sl 3950
+即将 BUY  XAUUSDm  0.01 手 @ 3997.15  (sl=3950.0 tp=- dev=20 点)
+校验通过：预估保证金 2.07，可用 12427.35
+确认执行？[y/N] y
+结果：retcode=0 (成功)  284 ms
+已确认为持仓：#2740800934 XAUUSDm 0.01 手 @ 3997.15
+```
