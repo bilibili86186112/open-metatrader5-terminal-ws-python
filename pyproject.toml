@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-metatrader5-terminal-ws-python"
+version = "1.0.0"
+description = "MetaTrader 5 client over the broker's WebSocket gateway — official MetaTrader5-compatible API, standard library only"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "dsh" }]
+keywords = ["metatrader", "mt5", "trading", "websocket", "forex"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Office/Business :: Financial :: Investment",
+]
+# 运行时零第三方依赖（AES / WebSocket 都有纯标准库实现）
+dependencies = []
+
+[project.optional-dependencies]
+# 可选加速件：装了会用更快的实现，不装也能跑
+fast = ["pycryptodome>=3.19", "cryptography>=41", "websocket-client>=1.6"]
+# 想要 copy_rates_* 返回 numpy 结构化数组（与官方包完全一致）时装上
+numpy = ["numpy>=1.24"]
+dev = ["pytest>=8"]
+
+[project.urls]
+Documentation = "https://github.com/lj189cn/metatrader5-terminal-python"
+
+[tool.setuptools]
+packages = ["mt5ws"]
+py-modules = ["MetaTrader5"]
+
+[tool.setuptools.package-data]
+mt5ws = ["frames/*.bin", "frames/*.hex"]
