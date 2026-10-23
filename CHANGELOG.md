@@ -38,3 +38,11 @@
 
 实测（Exness demo）：`buy XAUUSDm 0.01` → `retcode=0` 294ms → 自动确认为持仓 →
 `close` → `retcode=0` → 持仓归零。
+
+### 1.0.0 附加：Docker 部署
+
+* `Dockerfile`（python:3.12-alpine，非 root，入口 `mt5cli`，镜像约 76 MB）
+* `docker-compose.yml`：`mt5` 一次性/交互服务 + `watch` 常驻看板（每 60 秒打印账户与持仓）
+* `.dockerignore` / `.env.example`
+* 修了两处：`pyproject.toml` 里 `[project.urls]` 重复导致 `pip install` 失败（构建时才发现）；
+  `quote`/`kline` 未先 `symbol_select` 导致"无报价"；并为稀疏报价加了 **K 线兜底**

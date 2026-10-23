@@ -92,18 +92,36 @@ def cmd_symbols(args) -> int:
     return 0
 
 
+def _last_price(symbol: str):
+    """取最新价：优先 tick；拿不到就退回最新 M1 收盘价（报价推送可能很稀疏）。"""
+    t = mt5.symbol_info_tick(symbol)
+    if t and (t.bid or t.ask):
+        return t, "tick"
+    rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 1)
+    if rates:
+        c = rates[-1]["close"]
+        return mt5.Tick(time=rates[-1]["time"], bid=c, ask=c, last=0.0,
+                        volume=0, time_msc=0, flags=0, volume_real=0.0), "kline"
+    return None, "none"
+
+
 def cmd_quote(args) -> int:
-    t = mt5.symbol_info_tick(args.symbol)
+    mt5.symbol_select(args.symbol, True)   # 报价只来自订阅推送，先订阅
+    t, src = _last_price(args.symbol)
     if not t:
-        print(f"{args.symbol}: 无报价", mt5.last_error()); return 1
+        print(f"{args.symbol}: 无报价（订阅后仍未收到推送，且无 K 线）", mt5.last_error())
+        return 1
     si = mt5.symbol_info(args.symbol)
     sp = (t.ask - t.bid) if (t.bid and t.ask) else 0
+    note = "" if src == "tick" else "  ← 无实时推送，取自最后一根 M1 收盘价"
     print(f"{args.symbol:<12} bid={t.bid}  ask={t.ask}  点差={sp:.5f}"
-          + (f"  digits={si.digits}" if si else ""))
+          + (f"  digits={si.digits}" if si else "") + note)
     return 0
 
 
+
 def cmd_kline(args) -> int:
+    mt5.symbol_select(args.symbol, True)   # 同理：先订阅再取 K 线
     tf = getattr(mt5, f"TIMEFRAME_{args.tf.upper()}", None)
     if tf is None:
         print(f"未知周期 {args.tf}（如 M1/M5/M15/H1/D1）"); return 1

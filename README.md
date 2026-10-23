@@ -163,3 +163,62 @@ mt5> buy XAUUSDm 0.01 --sl 3950
 结果：retcode=0 (成功)  284 ms
 已确认为持仓：#2740800934 XAUUSDm 0.01 手 @ 3997.15
 ```
+
+---
+
+## Docker 部署
+
+镜像 **75.9 MB**（`python:3.12-alpine` + 纯标准库，无需编译工具链）。
+
+```bash
+# 1) 构建
+docker build -t mt5ws:1.0.0 .
+
+# 2) 一次性执行
+docker run --rm -e MT5_LOGIN=123456 -e MT5_PASSWORD='...' \
+              -e MT5_SERVER=Exness-MT5Trial5 mt5ws:1.0.0 account
+docker run --rm -e MT5_LOGIN=... -e MT5_PASSWORD=... mt5ws:1.0.0 quote XAUUSDm
+docker run --rm -e MT5_LOGIN=... -e MT5_PASSWORD=... mt5ws:1.0.0 positions
+
+# 3) 交互 REPL
+docker run --rm -it -e MT5_LOGIN=... -e MT5_PASSWORD=... mt5ws:1.0.0
+
+# 4) 真下单（注意 -y）
+docker run --rm -e MT5_LOGIN=... -e MT5_PASSWORD=... mt5ws:1.0.0 \
+           buy XAUUSDm 0.01 --sl 3950 -y
+```
+
+### docker compose
+
+```bash
+cp .env.example .env        # 填入账号密码（.env 已在 .gitignore 里）
+docker compose run --rm mt5 account            # 一次性
+docker compose run --rm -it mt5                # 交互
+docker compose up watch                        # 常驻看板：每 60 秒打印账户+持仓
+```
+
+### 容器设计要点
+
+| 项 | 做法 |
+|---|---|
+| 基础镜像 | `python:3.12-alpine`（约 76 MB，无编译工具链）|
+| 依赖 | **零第三方依赖**，`pip install .` 即可 |
+| 用户 | **非 root**（uid 10001）|
+| 入口 | `ENTRYPOINT ["mt5cli"]`，容器名后直接跟子命令 |
+| 凭据 | 只用环境变量，**不写进镜像**（`.env` 已 gitignore）|
+| 时区/编码 | `LANG=C.UTF-8`、`PYTHONUNBUFFERED=1` |
+
+### 实测（容器内，真实账户）
+
+```
+$ docker run --rm -e MT5_LOGIN=... -e MT5_PASSWORD=... mt5ws:1.0.0 account
+连接 277985376 @ Exness-MT5Trial5 …
+已连接：277985376 | 余额 10,018.63 USD | 杠杆 1:2000
+余额    : 10,018.63
+净值    : 12,441.54
+
+$ docker run --rm ... mt5ws:1.0.0 quote GBPUSDm
+GBPUSDm      bid=1.3372  ask=1.3373  点差=0.00010  digits=5
+```
+
+> 注：`quote` 若在冷启动时等不到 tick 推送（有些品种报价稀疏），会**自动退回最后一根 M1 收盘价**并在输出里注明。

@@ -1,0 +1,35 @@
+# 用法：
+#   cp .env.example .env      # 填入账号密码
+#   docker compose run --rm mt5 account
+#   docker compose run --rm mt5 quote XAUUSDm
+#   docker compose run --rm -it mt5            # 交互 REPL
+#
+# 2) 常驻的"看板"服务（每 60 秒打印一次账户 + 持仓汇总）：
+#   docker compose up watch
+
+services:
+  mt5:
+    build: .
+    image: mt5ws:1.0.0
+    env_file: [.env]
+    # 交易类命令默认不带 -y（安全）；需要真下单时显式加：
+    #   docker compose run --rm mt5 buy XAUUSDm 0.01 -y
+    stdin_open: true
+    tty: true
+
+  watch:
+    build: .
+    image: mt5ws:1.0.0
+    env_file: [.env]
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        while true; do
+          echo "──── $(date -u '+%Y-%m-%d %H:%M:%S') UTC ────"
+          mt5cli account || true
+          echo
+          mt5cli positions 2>/dev/null | head -12 || true
+          echo
+          sleep 60
+        done
+    restart: unless-stopped
