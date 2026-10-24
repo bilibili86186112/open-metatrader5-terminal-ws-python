@@ -1,22 +1,38 @@
 # 用法：
 #   cp .env.example .env      # 填入账号密码
-#   docker compose run --rm mt5 account
-#   docker compose run --rm mt5 quote XAUUSDm
-#   docker compose run --rm -it mt5            # 交互 REPL
 #
-# 2) 常驻的"看板"服务（每 60 秒打印一次账户 + 持仓汇总）：
+# ① 全屏 TUI（最常用）
+#   docker compose run --rm tui
+#
+# ② 命令行
+#   docker compose run --rm mt5 account
+#   docker compose run --rm -it mt5                 # 交互 REPL
+#
+# ③ 常驻看板（每 60 秒打印账户 + 持仓）
 #   docker compose up watch
 
 services:
+  # 全屏终端界面：必须有 TTY
+  tui:
+    build: .
+    image: mt5ws:1.0.0
+    env_file: [.env]
+    entrypoint: ["mt5tui"]
+    stdin_open: true
+    tty: true
+    # 自选品种与刷新间隔可按需覆盖：
+    #   docker compose run --rm tui --watch XAUUSDm,GBPUSDm --interval 2
+    command: ["--watch", "XAUUSDm,EURUSDm,GBPUSDm", "--interval", "1"]
+
+  # 命令行（一次性命令 / 交互）
   mt5:
     build: .
     image: mt5ws:1.0.0
     env_file: [.env]
-    # 交易类命令默认不带 -y（安全）；需要真下单时显式加：
-    #   docker compose run --rm mt5 buy XAUUSDm 0.01 -y
     stdin_open: true
     tty: true
 
+  # 常驻看板
   watch:
     build: .
     image: mt5ws:1.0.0

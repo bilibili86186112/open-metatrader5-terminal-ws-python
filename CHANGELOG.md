@@ -65,3 +65,12 @@ TUI/CLI 用「最后一根 M1 收盘价」兜底。冷启动 **36s → 10s**。
 `mt5ws/endpoints.py` 增加 `last_working()` / `remember_working()`：
 把上次成功的接入点记到 `~/.cache/mt5ws/last_endpoint.json`（**只存 host:port，不含凭据**），
 下次优先试它。`connect_auto` 已接入。
+
+### 1.0.0 附加：Docker 镜像内置 TUI
+
+* `Dockerfile`：`COPY` 补上 `mt5tui.py`（之前漏了，镜像里根本没有这个命令）；
+  新增 `apk add ncurses-terminfo-base` 与 `ENV TERM=xterm-256color`
+  —— Alpine 默认不带 terminfo，缺了 curses 全屏画不出来
+* `docker-compose.yml`：新增 `tui` 服务（`entrypoint: mt5tui` + `stdin_open`/`tty: true`），
+  与 `mt5`（命令行）、`watch`（常驻看板）并存
+* 镜像 **76.2 MB**；容器内实测 `--render` 与真 TTY 全屏均正常，`q` 退出码 0

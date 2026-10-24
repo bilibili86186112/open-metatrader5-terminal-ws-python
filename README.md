@@ -283,3 +283,35 @@ mt5tui --render                         # 只渲染一帧到 stdout（无 TTY �
 > 启动变慢的原因曾定位到 `symbol_info_tick` 每个品种阻塞 8 秒等推送（3 个品种白等 **24.6 秒**）。
 > 现已改为**默认不阻塞**，需要等待时显式传 `wait=`；TUI/CLI 用 K 线兜底。
 > 冷启动 36s → 10s（约 3.3×）。
+
+### Docker 里跑 TUI
+
+镜像里**已经包含 `mt5tui`**（`Dockerfile` 里 `COPY ... mt5tui.py`），
+并且装了 `ncurses-terminfo-base`（Alpine 默认没有 terminfo，curses 全屏会画不出来）。
+
+```bash
+cp .env.example .env        # 填账号密码
+docker compose run --rm tui                                  # 全屏 TUI（推荐）
+docker compose run --rm tui --watch XAUUSDm,GBPUSDm --interval 2
+
+# 不用 compose：
+docker run --rm -it --env-file .env --entrypoint mt5tui mt5ws:1.0.0
+docker run --rm --env-file .env --entrypoint mt5tui mt5ws:1.0.0 --render   # 无 TTY 看一帧
+```
+
+`docker-compose.yml` 现在有三个服务：
+
+| 服务 | 用途 | 要 TTY |
+|---|---|---|
+| `tui` | 全屏终端界面 | **是**（`stdin_open` + `tty`）|
+| `mt5` | 命令行（一次性 / 交互 REPL）| 交互时需要 |
+| `watch` | 常驻看板（每 60 秒打印账户+持仓）| 否 |
+
+#### 容器内实测（2026-10-24）
+
+| 项 | 结果 |
+|---|---|
+| 镜像大小 | **76.2 MB** |
+| `--render` 一帧 | 账户 + 3 品种报价 + 73 笔持仓（含浮动盈亏）✅ |
+| 真 TTY（`script` 分配 pty）| 标题/账户/自选/持仓/按键提示**全部渲染**，`q` 退出码 **0** ✅ |
+| `docker compose run --rm tui` | 同样正常，退出码 **0**，无残留容器 ✅ |
