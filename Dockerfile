@@ -38,6 +38,8 @@ COPY MetaTrader5.py mt5cli.py mt5tui.py ./
 
 RUN pip install --no-cache-dir . && \
     adduser -D -H -u 10001 mt5 && \
+    chown -R 10001:10001 /app && \
+    chmod -R a+rX /app && \
     rm -rf /root/.cache
 
 USER 10001
