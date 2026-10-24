@@ -153,8 +153,11 @@ class MT5Client:
         if endpoints:
             cand = list(endpoints)
         else:
-            from .endpoints import endpoints_for
+            from .endpoints import endpoints_for, last_working
             cand = endpoints_for(server)
+            _last = last_working(server)          # 上次成功的优先试，省几秒探测
+            if _last in cand:
+                cand = [_last] + [e for e in cand if e != _last]
         if not cand:
             from . import servers as _servers
             path = servers_dat or _servers.default_servers_dat()
@@ -176,6 +179,11 @@ class MT5Client:
                 client = cls.connect(f"wss://{host}:{port}/terminal",
                                      origin=f"https://{host}:{port}", debug=debug)
                 client.login(login, password, server=server, address=host)
+                try:                     # 记住可用接入点，下次优先（仅加速，不含凭据）
+                    from .endpoints import remember_working
+                    remember_working(server, ep)
+                except Exception:        # noqa: BLE001
+                    pass
                 return client
             except MT5Error as exc:
                 errors.append(f"{ep}: {exc}")

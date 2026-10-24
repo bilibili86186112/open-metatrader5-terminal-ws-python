@@ -334,10 +334,10 @@ def symbol_info(symbol: str):
     return info
 
 
-def symbol_info_tick(symbol: str):
+def symbol_info_tick(symbol: str, *, wait: float = 0.0):
     """最新报价；拿不到返回 ``None``。"""
     try:
-        t = _need().symbol_info_tick(symbol, wait=8.0)
+        t = _need().symbol_info_tick(symbol, wait=wait)
     except Exception as exc:                              # noqa: BLE001
         _err(-6, f"{type(exc).__name__}: {exc}")
         return None

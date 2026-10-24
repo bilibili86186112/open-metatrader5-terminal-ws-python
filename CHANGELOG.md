@@ -46,3 +46,22 @@
 * `.dockerignore` / `.env.example`
 * 修了两处：`pyproject.toml` 里 `[project.urls]` 重复导致 `pip install` 失败（构建时才发现）；
   `quote`/`kline` 未先 `symbol_select` 导致"无报价"；并为稀疏报价加了 **K 线兜底**
+
+### 1.0.0 附加：全屏终端界面 `mt5tui`
+
+* 纯 `curses`（标准库，零依赖）：标题栏 + 账户行 + 自选/持仓双面板 + 日志 + 命令行
+* 按键：`q` 退出、`r` 刷新、`Tab` 切换、`j/k` 移动、`b/s` 买卖、`c` 平仓、`:` 命令
+* 买卖与平仓**都要二次确认**；成交后自动重连刷新
+* `--render` 可无 TTY 渲染一帧，便于测试
+* 注册为 `mt5tui` 控制台脚本
+
+**顺带修的性能问题**：`symbol_info_tick` 原来每个品种阻塞 8 秒等推送，
+3 个品种白等 **24.6 秒**；实测 `tick x3 = 24.6s` 是启动耗时的大头。
+现改为**默认不阻塞**（`wait=0`），需要等待时显式传 `wait=`；
+TUI/CLI 用「最后一根 M1 收盘价」兜底。冷启动 **36s → 10s**。
+
+### 1.0.0 附加：接入点记忆
+
+`mt5ws/endpoints.py` 增加 `last_working()` / `remember_working()`：
+把上次成功的接入点记到 `~/.cache/mt5ws/last_endpoint.json`（**只存 host:port，不含凭据**），
+下次优先试它。`connect_auto` 已接入。

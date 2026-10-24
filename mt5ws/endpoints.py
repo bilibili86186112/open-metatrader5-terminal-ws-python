@@ -18,7 +18,8 @@
 
 from __future__ import annotations
 
-__all__ = ["KNOWN_ENDPOINTS", "endpoints_for", "DEFAULT_SERVER"]
+__all__ = ["KNOWN_ENDPOINTS", "endpoints_for", "DEFAULT_SERVER",
+           "last_working", "remember_working"]
 
 #: 默认服务器名
 DEFAULT_SERVER = "Exness-MT5Trial5"
@@ -45,3 +46,46 @@ KNOWN_ENDPOINTS: dict[str, list[str]] = {
 def endpoints_for(server: str) -> list[str]:
     """按服务器名取接入点；找不到返回空列表（调用方再走 servers.dat 兜底）。"""
     return list(KNOWN_ENDPOINTS.get(server, []))
+
+
+# ---------------------------------------------------------------- 记住可用接入点
+#
+# 探测每个接入点要几秒，6 个候选最多能拖到 30 秒。这里把**上次成功**的那个记下来，
+# 下次优先试它 —— 冷启动 ~30s → 热启动 ~3s。只存 host:port，**不存任何凭据**。
+import json as _json
+import os as _os
+
+
+def _cache_path() -> str:
+    d = _os.environ.get("MT5WS_CACHE_DIR") or _os.path.join(
+        _os.path.expanduser("~"), ".cache", "mt5ws")
+    return _os.path.join(d, "last_endpoint.json")
+
+
+def last_working(server: str):
+    """读"上次成功"的接入点；没有/读不出返回 None。"""
+    try:
+        with open(_cache_path(), "r", encoding="utf-8") as fh:
+            data = _json.load(fh)
+        ep = data.get(server)
+        return ep if isinstance(ep, str) and ":" in ep else None
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def remember_working(server: str, endpoint: str) -> None:
+    """记下成功的接入点（失败静默 —— 这只是加速，不该影响主流程）。"""
+    try:
+        path = _cache_path()
+        _os.makedirs(_os.path.dirname(path), exist_ok=True)
+        data = {}
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = _json.load(fh)
+        except Exception:                                 # noqa: BLE001
+            data = {}
+        data[server] = endpoint
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(data, fh)
+    except Exception:                                     # noqa: BLE001
+        pass
