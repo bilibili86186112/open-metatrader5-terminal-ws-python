@@ -24,7 +24,7 @@ from collections import namedtuple
 from typing import Iterable, Optional, Sequence
 
 from . import crypto, protocol, serial
-from .transport import Frame, MT5Error, WebSocketTransport
+from .transport import Frame, MT5Disconnected, MT5Error, WebSocketTransport
 
 # --------------------------------------------------------------------------- #
 # 返回结构（与官方包同名的命名元组）
@@ -84,6 +84,7 @@ class MT5Client:
         self.server: Optional[str] = None
         #: 本次连接的主机（登录报文里要填这个地址）
         self._host: Optional[str] = getattr(transport, "host", None)
+        self._port: int = 443
         self.symbol_ids: dict[str, int] = {}
         self._symbols_meta: dict[str, dict] = {}
         self.specs: dict[str, dict] = {}
@@ -96,6 +97,19 @@ class MT5Client:
         self._lock = threading.Lock()
         self.notifications: list[int] = []
         self._tick_cb = None                          # 实时 tick 推送回调（服务端用它转发给前端 WS）
+        # ---- 保活与重连 ----
+        #: 心跳间隔（秒）。服务端会掐掉长时间静默的连接，实测空闲约 1~2 分钟即断。
+        #: 0 表示关闭心跳。
+        self.heartbeat_interval: float = 20.0
+        #: 断线后是否自动重连（重连会重新登录并恢复订阅）
+        self.auto_reconnect: bool = True
+        #: 登录凭据**只留在内存里**（为了重连），绝不落盘
+        self._login_args: Optional[dict] = None
+        #: 订阅过的品种，重连后自动恢复
+        self._subscribed: set[str] = set()
+        self._hb_stop = threading.Event()
+        self._hb_thread: Optional[threading.Thread] = None
+        self._reconnect_count = 0
         self.t.add_push_handler(self._on_push)
 
     def set_tick_callback(self, cb) -> None:
@@ -113,7 +127,16 @@ class MT5Client:
         tr = WebSocketTransport(url, origin=origin, verify_tls=verify_tls,
                                 debug=debug)
         tr.connect(timeout=timeout)
-        return cls(tr, debug=debug)
+        obj = cls(tr, debug=debug)
+        #: 记住 host/port，自动重连时要用
+        obj._host = getattr(tr, "host", None) or obj._host
+        try:
+            from urllib.parse import urlparse
+            _u = urlparse(url)
+            obj._port = _u.port or 443
+        except Exception:                                 # noqa: BLE001
+            obj._port = 443
+        return obj
 
     @staticmethod
     def web_terminal_ok(host: str, port: int = 443, timeout: float = 6.0) -> bool:
@@ -308,16 +331,24 @@ class MT5Client:
             struct.pack_into("<I", body, 476, len(srv) // 2)   # 字符数，不是字节数
             body[480:480 + min(len(srv), 256)] = srv[:256]
         struct.pack_into("<Q", body, 736, login)
-        frame = self.t.send(protocol.CMD_LOGIN, bytes(body), timeout=timeout)
+        frame = self._send(protocol.CMD_LOGIN, bytes(body), timeout=timeout)
         if frame.res_code != 0:
             raise MT5LoginError(
                 f"登录被拒 / login refused: res_code={frame.res_code} "
                 f"body={frame.body[:64].hex()}")
         self.login_id = login
+        # 凭据**只放内存**，供断线自动重连使用；绝不写盘
+        self._login_args = {"login": login, "password": password, "server": server}
+        self.server = server or self.server
         if self.debug:
             print(f"[login] account_id={self.login_id} body={len(frame.body)}B")
         # 登录后把品种表拉下来，后面订阅/下单都要用
         self.load_symbols()
+        # 起心跳线程：服务端会掐掉长时间静默的连接
+        try:
+            self.start_heartbeat()
+        except Exception:                                 # noqa: BLE001
+            pass
         return self.account_info()
 
     # ---------------- 账户 ----------------
@@ -335,7 +366,7 @@ class MT5Client:
 
         ``with_positions=False`` 可跳过那次持仓请求（例如只关心余额时）。
         """
-        frame = self.t.send(protocol.CMD_ACCOUNT, b"", timeout=timeout)
+        frame = self._send(protocol.CMD_ACCOUNT, b"", timeout=timeout)
         if frame.res_code != 0:
             raise MT5Error(f"cmd 3 失败 / account_info failed: {frame.res_code}")
         vals, _ = serial.parse_series(frame.body, protocol.ACCOUNT_SCHEMA, 0)
@@ -366,7 +397,7 @@ class MT5Client:
     # ---------------- 品种 ----------------
     def load_symbols(self, timeout: float = 30.0) -> int:
         """拉取品种列表（cmd_id=34，响应是 gzip），返回品种数。"""
-        frame = self.t.send(protocol.CMD_SYMBOLS, b"", timeout=timeout)
+        frame = self._send(protocol.CMD_SYMBOLS, b"", timeout=timeout)
         if frame.res_code != 0:
             raise MT5Error(f"cmd 34 失败 / symbols failed: {frame.res_code}")
         payload = frame.body
@@ -427,6 +458,8 @@ class MT5Client:
         """
         if isinstance(symbols, str):
             symbols = [symbols]
+        symbols = list(symbols)
+        self._subscribed.update(symbols)      # 重连后自动恢复
         ids = []
         for s in symbols:
             sid = self.symbol_ids.get(s)
@@ -435,7 +468,7 @@ class MT5Client:
             ids.append(sid)
         payload = struct.pack("<I", len(ids)) + b"".join(
             struct.pack("<I", i) for i in ids)
-        frame = self.t.send(protocol.CMD_SUBSCRIBE, payload, timeout=timeout)
+        frame = self._send(protocol.CMD_SUBSCRIBE, payload, timeout=timeout)
         if frame.res_code != 0:
             raise MT5Error(f"订阅失败 / subscribe failed: {frame.res_code}")
         return len(ids)
@@ -456,7 +489,7 @@ class MT5Client:
         from .symbol_spec import parse_spec
 
         payload = struct.pack("<II", 1, sid)
-        frame = self.t.send(protocol.CMD_SYMBOL_SPEC, payload, timeout=timeout)
+        frame = self._send(protocol.CMD_SYMBOL_SPEC, payload, timeout=timeout)
         if frame.res_code != 0:
             raise MT5Error(f"规格请求失败 / spec failed: {frame.res_code}")
         info = parse_spec(bytes(frame.body))
@@ -551,7 +584,7 @@ class MT5Client:
         struct.pack_into("<H", payload, 64, tf)
         struct.pack_into("<i", payload, 66, int(date_from))
         struct.pack_into("<i", payload, 70, int(date_to))
-        frame = self.t.send(protocol.CMD_CANDLES, bytes(payload), timeout=timeout)
+        frame = self._send(protocol.CMD_CANDLES, bytes(payload), timeout=timeout)
         if frame.res_code != 0:
             raise MT5Error(f"取 K 线失败 / candles failed: {frame.res_code}")
         body = frame.body
@@ -629,7 +662,7 @@ class MT5Client:
         if min_interval > 0 and gap < min_interval:
             time.sleep(min_interval - gap)
         self._last_pos_query = time.time()
-        frame = self.t.send(protocol.CMD_POSITIONS, b"", timeout=timeout)
+        frame = self._send(protocol.CMD_POSITIONS, b"", timeout=timeout)
         if frame.res_code != 0:
             raise MT5Error(f"cmd 4 失败 / positions failed: {frame.res_code}")
         positions, orders = self._parse_positions(frame.body)
@@ -648,7 +681,7 @@ class MT5Client:
     def history_deals_get(self, date_from: int = 0, date_to: int = 0, *,
                           timeout: float = 40.0) -> tuple[list[TradeDeal], list[TradeOrder]]:
         payload = struct.pack("<ii", int(date_from), int(date_to))
-        frame = self.t.send(protocol.CMD_HISTORY, payload, timeout=timeout)
+        frame = self._send(protocol.CMD_HISTORY, payload, timeout=timeout)
         if frame.res_code != 0:
             raise MT5Error(f"cmd 5 失败 / history failed: {frame.res_code}")
         body = frame.body
@@ -749,7 +782,7 @@ class MT5Client:
         )
         with self._lock:
             self._trade_events.clear()
-        frame = self.t.send(protocol.CMD_TRADE, payload, timeout=timeout)
+        frame = self._send(protocol.CMD_TRADE, payload, timeout=timeout)
         result_raw = frame.body
         if frame.res_code != 0 and len(frame.body) < 128:
             # 有些服务器把 4 字节 retcode 直接放在响应体里
@@ -855,8 +888,63 @@ class MT5Client:
         })
 
     # ---------------- 杂项 ----------------
+    # ---------------- 保活 / 重连 ----------------
+    def _send(self, cmd, payload: bytes = b"", timeout: float = 20.0):
+        """内部收发：断线时自动重连一次再重试。"""
+        try:
+            return self.t.send(cmd, payload, timeout=timeout)
+        except MT5Disconnected:
+            if not self.auto_reconnect or not self._login_args:
+                raise
+            self._reconnect()
+            return self._send(cmd, payload, timeout=timeout)
+
+    def _reconnect(self) -> None:
+        """重建连接、重新登录、恢复订阅。失败抛 MT5Error。"""
+        args = dict(self._login_args or {})
+        if not args:
+            raise MT5Error("没有登录凭据，无法自动重连")
+        self._reconnect_count += 1
+        host = self._host
+        try:
+            self.t.close()
+        except Exception:                                 # noqa: BLE001
+            pass
+        tr = WebSocketTransport(f"wss://{host}:{self._port}/terminal",
+                                origin=f"https://{host}:{self._port}")
+        tr.connect(timeout=20.0)
+        self.t = tr
+        self.login(args["login"], args["password"], server=args["server"], address=host)
+        for sym in list(self._subscribed):
+            try:
+                self.subscribe([sym])
+            except Exception:                             # noqa: BLE001
+                pass
+
+    def start_heartbeat(self) -> None:
+        """启动后台心跳线程（幂等）。"""
+        if self.heartbeat_interval <= 0 or self._hb_thread is not None:
+            return
+        self._hb_stop.clear()
+
+        def _loop():
+            while not self._hb_stop.wait(self.heartbeat_interval):
+                try:
+                    self.t.send(protocol.CMD_HEARTBEAT, b"", timeout=10.0)
+                except Exception:                         # noqa: BLE001
+                    if not self.auto_reconnect or not self._login_args:
+                        return
+                    try:
+                        self._reconnect()
+                    except Exception:                     # noqa: BLE001
+                        pass
+
+        t = threading.Thread(target=_loop, name="mt5-heartbeat", daemon=True)
+        self._hb_thread = t
+        t.start()
+
     def heartbeat(self, timeout: float = 10.0) -> bool:
-        frame = self.t.send(protocol.CMD_HEARTBEAT, b"", timeout=timeout)
+        frame = self._send(protocol.CMD_HEARTBEAT, b"", timeout=timeout)
         return frame.res_code == 0
 
     def account_url_hint(self) -> Optional[str]:

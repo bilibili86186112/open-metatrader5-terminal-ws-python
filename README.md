@@ -315,3 +315,38 @@ docker run --rm --env-file .env --entrypoint mt5tui mt5ws:1.0.0 --render   # 无
 | `--render` 一帧 | 账户 + 3 品种报价 + 73 笔持仓（含浮动盈亏）✅ |
 | 真 TTY（`script` 分配 pty）| 标题/账户/自选/持仓/按键提示**全部渲染**，`q` 退出码 **0** ✅ |
 | `docker compose run --rm tui` | 同样正常，退出码 **0**，无残留容器 ✅ |
+
+---
+
+## 连接保活与自动重连（重要）
+
+服务端会掐掉**长时间静默**的 WebSocket 连接，客户端也可能因为网络抖动断开。
+本库内建两层保护，**默认开启**：
+
+| 机制 | 默认 | 说明 |
+|---|---|---|
+| **心跳** | **20 秒** | 后台线程定时发 `CMD_HEARTBEAT`；`MT5Client.heartbeat_interval = 0` 可关闭 |
+| **自动重连** | **开** | 任何一次收发遇到 `MT5Disconnected` 会**自动重建连接 + 重新登录 + 恢复订阅**，然后重试那次请求；`auto_reconnect = False` 可关闭 |
+
+对使用者的意义：**断线基本无感**。你照常调 `account_info()` / `positions_get()` / `order_send()`，
+底下的断线重连不会冒到上层。
+
+```python
+import MetaTrader5 as mt5
+mt5.initialize()
+c = mt5._client
+print(c.heartbeat_interval, c.auto_reconnect)
+c.heartbeat_interval = 15      # 想更频繁
+```
+
+> 登录凭据为了重连只保存在**内存**里（`_login_args`），**不写任何文件**。
+
+### 实测（2026-10-24，Exness demo）
+
+| 场景 | 结果 |
+|---|---|
+| 空转 5 分钟（不心跳、不查询）| 未断 —— 说明服务端不是短空闲超时 |
+| **带心跳连续 6 分钟** | **0 次掉线** |
+| **强制掐断底层连接** | **自动重连 1 次，下一次查询直接成功**（重登 + 恢复订阅）|
+| 高频查询 40 次（~1.5 次/秒）| 0 失败 |
+| 30 分钟长连接 | 见 `日志/` 记录 |
